@@ -17,7 +17,7 @@ import trimesh
 from PIL import Image
 from PIL.ImageDraw import Draw
 
-from hyperdrone.environments.outdoor.outdoor import OutdoorWorld
+from hyperdrone.environments.outdoor.terrain.world import World
 
 
 def colormap_from_biome_grid(
@@ -43,27 +43,29 @@ def colormap_from_biome_grid(
     return np.clip(img * 255, 0, 255).astype(np.uint8)
 
 
-def save_biome_map(world: OutdoorWorld, path: str) -> None:
+def save_biome_map(world: World, path: str) -> None:
     """Save a top-down biome color map as PNG.
 
     Args:
-        world: The generated outdoor world.
+        world: The generated World instance.
         path: Output file path.
+        size: Physical world size in meters.
     """
-    biome_grid = world.heightfield.biome
+    biome_grid = world.biome
 
     # Color palette from BIOMES definitions
     colors: dict[int, tuple[float, float, float]] = {
-        0: (0.07, 0.13, 0.30),   # Deep ocean
-        1: (0.12, 0.38, 0.60),   # Beach and coast
-        2: (0.40, 0.55, 0.20),   # Temperate grassland
-        3: (0.15, 0.40, 0.12),   # Temperate deciduous forest
-        4: (0.05, 0.30, 0.08),   # Temperate rainforest
-        5: (0.10, 0.25, 0.15),   # Boreal forest
-        6: (0.70, 0.75, 0.80),   # Tundra
-        7: (0.90, 0.92, 0.95),   # Glacier
-        8: (0.35, 0.45, 0.25),   # Alpine meadow
-        9: (0.50, 0.45, 0.40),   # Mountain peaks
+        -1: (0.0, 0.0, 0.0),  # Unknown/invalid
+        0: (0.07, 0.13, 0.30),  # Deep ocean
+        1: (0.12, 0.38, 0.60),  # Beach and coast
+        2: (0.40, 0.55, 0.20),  # Temperate grassland
+        3: (0.15, 0.40, 0.12),  # Temperate deciduous forest
+        4: (0.05, 0.30, 0.08),  # Temperate rainforest
+        5: (0.10, 0.25, 0.15),  # Boreal forest
+        6: (0.70, 0.75, 0.80),  # Tundra
+        7: (0.90, 0.92, 0.95),  # Glacier
+        8: (0.35, 0.45, 0.25),  # Alpine meadow
+        9: (0.50, 0.45, 0.40),  # Mountain peaks
         10: (0.80, 0.70, 0.35),  # Hot desert
         11: (0.65, 0.55, 0.35),  # Rocky desert
         12: (0.55, 0.60, 0.15),  # Savanna
@@ -82,16 +84,17 @@ def save_biome_map(world: OutdoorWorld, path: str) -> None:
     print(f"  Saved biome map: {path}")
 
 
-def save_heightfield_heatmap(world: OutdoorWorld, path: str) -> None:
+def save_heightfield_heatmap(world: World, path: str) -> None:
     """Save a heightfield heatmap as PNG using PIL (no matplotlib).
 
     Uses a terrain-like sequential colormap computed from numpy.
 
     Args:
-        world: The generated outdoor world.
+        world: The generated World instance.
         path: Output file path.
+        size: Physical world size in meters.
     """
-    height = world.heightfield.height  # Normalized [0, 1]
+    height = world.elevation  # Absolute elevation in world units
 
     # Build a terrain colormap: deep water -> sand -> grass -> rock -> snow
     def terrain_color(t: np.ndarray) -> np.ndarray:
@@ -150,27 +153,29 @@ def save_heightfield_heatmap(world: OutdoorWorld, path: str) -> None:
     print(f"  Saved heightfield heatmap: {path}")
 
 
-def save_3d_terrain(world: OutdoorWorld, path: str) -> None:
+def save_3d_terrain(world: World, path: str, size: float = 512.0) -> None:
     """Save a 3D perspective render of the terrain using trimesh + PIL.
 
     Uses a fast perspective projection with simple lighting computed per triangle.
     """
-    height = world.heightfield.height
-    size = world.size
+    height = world.elevation  # Absolute elevation
     res = min(height.shape[0], 128)  # Downsample for render speed
 
     # Build mesh
     x = np.linspace(-size / 2, size / 2, res)
     y = np.linspace(-size / 2, size / 2, res)
     xx, yy = np.meshgrid(x, y)
-    zz = height[:res, :res] * size * 0.3
+    zz = height[:res, :res]  # Already in world units
 
     row = np.arange(res)
     i, j = np.meshgrid(row[:-1], row[:-1], indexing="ij")
-    triangles = np.stack([
-        np.c_[i.ravel(), j.ravel(), ((i + 1) * res + (j + 1)).ravel()],
-        np.c_[i.ravel(), ((i + 1) * res + (j + 1)).ravel(), ((i + 1) * res + j).ravel()],
-    ], axis=1).reshape(-1, 3)
+    triangles = np.stack(
+        [
+            np.c_[i.ravel(), j.ravel(), ((i + 1) * res + (j + 1)).ravel()],
+            np.c_[i.ravel(), ((i + 1) * res + (j + 1)).ravel(), ((i + 1) * res + j).ravel()],
+        ],
+        axis=1,
+    ).reshape(-1, 3)
 
     vertices = np.stack([xx.ravel(), zz.ravel(), -yy.ravel()], axis=1)
 
@@ -190,6 +195,8 @@ def save_3d_terrain(world: OutdoorWorld, path: str) -> None:
     scale = min(w_img, h_img * 0.8) / size
 
     # Create image and draw polygons
+    h_min, h_max = world.elevation.min(), world.elevation.max()
+    h_range = h_max - h_min if h_max > h_min else 1.0
     img = Image.new("RGB", (w_img, h_img), (15, 20, 35))  # Dark sky
     draw = Draw(img)
 
@@ -202,7 +209,7 @@ def save_3d_terrain(world: OutdoorWorld, path: str) -> None:
         def project(v: np.ndarray) -> tuple[int, int]:
             z = max(v[1], 0.01)
             px = center_x + v[0] * scale * fov / z
-            py = center_y - (v[1] * 0.5 + v[2] * scale * 0.3) / z * h_img / (size * 0.3)
+            py = center_y - (v[1] * 0.5 + v[2] * scale * 0.3) / z * h_img / (h_range * 0.5)
             return int(px), int(py)
 
         p0 = project(v0s)
@@ -211,7 +218,7 @@ def save_3d_terrain(world: OutdoorWorld, path: str) -> None:
 
         # Height-based color with lighting
         avg_height = np.mean([v0s[1], v1s[1], v2s[1]])
-        ht_norm = np.clip(avg_height / (size * 0.3), 0, 1)
+        ht_norm = (avg_height - h_min) / h_range
         shade = lighting[t_idx]
         r = int((0.2 + 0.6 * ht_norm) * shade * 0.9 + 0.1) * 255 // 255
         g = int((0.5 - 0.2 * ht_norm) * shade * 0.9 + 0.1) * 255 // 255
@@ -223,7 +230,9 @@ def save_3d_terrain(world: OutdoorWorld, path: str) -> None:
 
     # Also save OBJ for Blender/Maya
     obj_path = path.replace(".png", ".obj")
-    trimesh.Trimesh(vertices=vertices, faces=triangles, process=False).export(obj_path, file_type="obj")
+    trimesh.Trimesh(vertices=vertices, faces=triangles, process=False).export(
+        obj_path, file_type="obj"
+    )
     print(f"  Saved 3D render: {path}")
     print(f"  Saved OBJ mesh: {obj_path}")
 
@@ -233,29 +242,46 @@ def main() -> None:
     seeds = [42, 123, 999]
     output_dir = "screenshots"
     resolution = 256
+    size = 6000.0  # Match continent scale
 
     os.makedirs(output_dir, exist_ok=True)
 
     for seed in seeds:
         print(f"\nGenerating world (seed={seed})...")
-        world = OutdoorWorld(seed=seed, resolution=resolution, size=512.0)
-        world.generate()
+        w = World(
+            seed=seed,
+            resolution=resolution,
+            size=size,
+            climate={
+                'latitudeGradient': 10,
+            },
+        )
+        x = np.linspace(-size/2, size/2, resolution)
+        y = np.linspace(-size/2, size/2, resolution)
+        xx, yy = np.meshgrid(x, y)
+        z = yy  # Use y as latitude for temperature gradient
+        w._sample_all(xx, yy, z)
 
         prefix = f"{output_dir}/world_seed{seed}"
 
         print("  Biome map...")
-        save_biome_map(world, f"{prefix}_biome.png")
+        save_biome_map(w, f"{prefix}_biome.png")
 
         print("  Heightfield heatmap...")
-        save_heightfield_heatmap(world, f"{prefix}_height.png")
+        save_heightfield_heatmap(w, f"{prefix}_height.png")
 
         print("  3D terrain render...")
-        save_3d_terrain(world, f"{prefix}_terrain.png")
+        save_3d_terrain(w, f"{prefix}_terrain.png", size)
 
-        h = world.heightfield.height
-        print(f"  World: height=[{h.min():.3f}, {h.max():.3f}], "
-              f"biomes={len(np.unique(world.heightfield.biome))}, "
-              f"resolution={resolution}x{resolution}")
+        h = w.elevation
+        temps = w.temp
+        biomes = np.unique(w.biome)
+        print(
+            f"  World: elevation=[{h.min():.2f}, {h.max():.2f}], "
+            f"temp=[{temps.min():.1f}, {temps.max():.1f}], "
+            f"biomes={len(biomes)}, "
+            f"resolution={resolution}x{resolution}"
+        )
 
     print(f"\nDone! All renders in {output_dir}/")
 

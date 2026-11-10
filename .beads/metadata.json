@@ -1,0 +1,7 @@
+{
+  "database": "dolt",
+  "backend": "dolt",
+  "dolt_mode": "embedded",
+  "dolt_database": "hyperdrone",
+  "project_id": "b1323732-b903-49b4-9de2-565cca0f5361"
+}

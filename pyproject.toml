@@ -1,0 +1,105 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "hyperdrone-outdoor"
+version = "0.1.0"
+description = "Procedural outdoor terrain generation for HyperDrone"
+requires-python = ">=3.12"
+dependencies = [
+    "numpy>=1.26",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["hyperdrone"]
+
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+
+[tool.ruff.lint]
+select = [
+    # pycodestyle errors
+    "E",
+    # Pyflakes
+    "F",
+    # isort
+    "I",
+    # pep8-naming
+    "N",
+    # pyupgrade
+    "UP",
+    # flake8-annotations
+    "ANN",
+    # flake8-bugbear
+    "B",
+    # flake8-simplify
+    "SIM",
+    # pylint
+    "PL",
+    # flake8-pytest-style
+    "PT",
+    # Ruff-specific rules
+    "RUF",
+    # flake8-unused-arguments
+    "ARG",
+    # flake8-datetimez
+    "DTZ",
+    # flake8-errmsg
+    "EM",
+    # refurb
+    "FURB",
+    # pandas-vet
+    "PD",
+]
+ignore = [
+    # Intentionally violated - noise functions need many params
+    "PLR0913",  # too-many-arguments (noise API)
+    "PLR0917",  # too-many-positional-arguments (noise API)
+    # Climate thresholds are domain constants, not magic values
+    "PLR2004",  # magic-value-comparison (climate science)
+    # Line length in complex expressions
+    "E501",     # line-too-long
+    # Self/cls type annotations are not needed in instance methods
+    "ANN101",   # self type annotation (removed in ruff)
+    "ANN102",   # cls type annotation (removed in ruff)
+    # Validation functions have multiple early returns
+    "PLR0911",  # too-many-return-statements (validate())
+]
+
+[tool.ruff.lint.per-file-ignores]
+"__init__.py" = ["F401"]
+"*/tests/*" = ["ANN201"]
+"*/examples/*" = ["ANN201"]
+
+[tool.ruff.lint.pycodestyle]
+max-line-length = 100
+
+[tool.ruff.lint.isort]
+known-first-party = ["hyperdrone"]
+
+[tool.ruff.lint.pep8-naming]
+ignore-names = ["_s", "_g"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+markers = [
+    "slow: marks tests as slow (deselect with '-m \"not slow\"')",
+    "integration: marks tests as integration tests",
+]
+addopts = "-v --tb=short"
+
+[tool.coverage.run]
+source = ["hyperdrone"]
+omit = [
+    "*/tests/*",
+    "*/examples/*",
+]
+
+[tool.coverage.report]
+show_missing = true
+fail_under = 80

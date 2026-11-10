@@ -40,20 +40,20 @@ apt install git cmake curl python3-dev python3-pip python3-venv build-essential
 - Other GPUs / **Vulkan**: `apt install libvulkan-dev glslang-tools`
 #### macOS
 ```sh
-brew install python cmake
+brew install uv run cmake
 ```
 
 ## Quick Start
 ```sh
-pip install hyperdrone[examples]
+uv uv pip install hyperdrone[examples]
 ```
 Benchmark your GPU:
 ```sh
-python3 -m hyperlux.examples.benchmark
+uv run -m hyperlux.examples.benchmark
 ```
 **HyperDrone Spy** is the UI that lets you peek into HyperDrone environments. Here, 4 agents share a scene (for perf) but don't see each other (e.g. for single-agent RL). HyperDrone also supports flexible configurations (e.g. multi-agent without self-occlusion). 
 ```sh
-python3 -m hyperdrone.examples.spy
+uv run -m hyperdrone.examples.spy
 ```
 ## Documentation
 

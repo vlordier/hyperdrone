@@ -1,12 +1,11 @@
-"""Generate high-resolution screenshots of procedural outdoor worlds.
+"""Generate high-resolution trimesh renders of procedural outdoor worlds.
 
-Creates multiple views of the terrain:
-  - Top-down biome map (color-coded)
-  - 3D perspective terrain view
-  - Heightfield heatmap
-  - Scatter overlay (trees/rocks)
+Creates:
+  - 3D perspective terrain render (PNG via PIL)
+  - OBJ mesh file for further work in Blender/Maya
+  - Heightfield heatmap (PNG via PIL, no matplotlib)
 
-Run: uv run python -m hyperdrone.examples.outdoor_screenshots
+Run: uv run python -m hyperdrone.examples.generate_screenshots
 """
 
 from __future__ import annotations
@@ -14,165 +13,252 @@ from __future__ import annotations
 import os
 
 import numpy as np
-from matplotlib import pyplot as plt
-from matplotlib.colors import to_rgba
+import trimesh
+from PIL import Image
+from PIL.ImageDraw import Draw
 
 from hyperdrone.environments.outdoor.outdoor import OutdoorWorld
-from hyperdrone.environments.outdoor.terrain.biomes import BIOME_MAP
+
+
+def colormap_from_biome_grid(
+    biome_grid: np.ndarray,
+    colors: dict[int, tuple[float, float, float]],
+) -> np.ndarray:
+    """Convert a biome grid to an RGB image using a color lookup.
+
+    Args:
+        biome_grid: 2D array of biome indices.
+        colors: Mapping from biome index to (R, G, B) floats in [0, 1].
+
+    Returns:
+        RGB image as uint8 HxWx3.
+    """
+    h, w = biome_grid.shape
+    img = np.zeros((h, w, 3), dtype=np.float32)
+    for bidx, (r, g, b) in colors.items():
+        mask = biome_grid == bidx
+        img[mask, 0] = r
+        img[mask, 1] = g
+        img[mask, 2] = b
+    return np.clip(img * 255, 0, 255).astype(np.uint8)
 
 
 def save_biome_map(world: OutdoorWorld, path: str) -> None:
-    """Save a top-down biome color map.
+    """Save a top-down biome color map as PNG.
 
     Args:
         world: The generated outdoor world.
-        path: Output file path (.png recommended).
+        path: Output file path.
     """
     biome_grid = world.heightfield.biome
-    h, w = biome_grid.shape
 
-    # Build RGBA image from biome colors
-    img = np.zeros((h, w, 4), dtype=np.float64)
-    for idx, biome in enumerate(BIOME_MAP.values()):
-        mask = biome_grid == idx
-        rgba = to_rgba(biome.color)
-        img[mask] = rgba
+    # Color palette from BIOMES definitions
+    colors: dict[int, tuple[float, float, float]] = {
+        0: (0.07, 0.13, 0.30),   # Deep ocean
+        1: (0.12, 0.38, 0.60),   # Beach and coast
+        2: (0.40, 0.55, 0.20),   # Temperate grassland
+        3: (0.15, 0.40, 0.12),   # Temperate deciduous forest
+        4: (0.05, 0.30, 0.08),   # Temperate rainforest
+        5: (0.10, 0.25, 0.15),   # Boreal forest
+        6: (0.70, 0.75, 0.80),   # Tundra
+        7: (0.90, 0.92, 0.95),   # Glacier
+        8: (0.35, 0.45, 0.25),   # Alpine meadow
+        9: (0.50, 0.45, 0.40),   # Mountain peaks
+        10: (0.80, 0.70, 0.35),  # Hot desert
+        11: (0.65, 0.55, 0.35),  # Rocky desert
+        12: (0.55, 0.60, 0.15),  # Savanna
+        13: (0.05, 0.35, 0.10),  # Tropical rainforest
+        14: (0.15, 0.45, 0.12),  # Tropical dry forest
+        15: (0.45, 0.55, 0.25),  # Mediterranean
+        16: (0.55, 0.55, 0.30),  # Cold steppe
+        17: (0.25, 0.40, 0.20),  # Wetland
+        18: (0.20, 0.35, 0.18),  # Mangrove
+        19: (0.15, 0.12, 0.10),  # Volcanic
+    }
 
-    plt.figure(figsize=(12, 12), dpi=150)
-    plt.imshow(img)
-    plt.title('Procedural Outdoor World — Biome Map')
-    plt.axis('off')
-    plt.tight_layout()
-    plt.savefig(path, dpi=150, bbox_inches='tight')
-    plt.close()
-    print(f'  Saved biome map: {path}')
+    img = colormap_from_biome_grid(biome_grid, colors)
+    pil_img = Image.fromarray(img, mode="RGB")
+    pil_img.save(path, "PNG")
+    print(f"  Saved biome map: {path}")
 
 
 def save_heightfield_heatmap(world: OutdoorWorld, path: str) -> None:
-    """Save a heightfield heatmap.
+    """Save a heightfield heatmap as PNG using PIL (no matplotlib).
+
+    Uses a terrain-like sequential colormap computed from numpy.
 
     Args:
         world: The generated outdoor world.
         path: Output file path.
     """
-    height = world.heightfield.height
+    height = world.heightfield.height  # Normalized [0, 1]
 
-    fig, ax = plt.subplots(figsize=(12, 10), dpi=150)
-    extent: tuple[float, float, float, float] = (-world.size / 2, world.size / 2, -world.size / 2, world.size / 2)
-    im = ax.imshow(height, cmap='terrain', extent=extent)
-    ax.set_title('Procedural Outdoor World — Heightfield')
-    ax.set_xlabel('X (m)')
-    ax.set_ylabel('Y (m)')
-    fig.colorbar(im, ax=ax, label='Normalized height [0, 1]')
-    plt.tight_layout()
-    plt.savefig(path, dpi=150, bbox_inches='tight')
-    plt.close()
-    print(f'  Saved heightfield: {path}')
+    # Build a terrain colormap: deep water -> sand -> grass -> rock -> snow
+    def terrain_color(t: np.ndarray) -> np.ndarray:
+        """Map normalized height [0, 1] to RGB using terrain gradient."""
+        r = np.zeros_like(t)
+        g = np.zeros_like(t)
+        b = np.zeros_like(t)
+
+        # Deep water (0.0 - 0.15)
+        m = (t >= 0.0) & (t < 0.15)
+        u = (t[m] - 0.0) / 0.15 if m.any() else 0.0
+        r[m] = 0.07 + 0.05 * u
+        g[m] = 0.13 + 0.25 * u
+        b[m] = 0.30 + 0.30 * u
+
+        # Shallow water / beach (0.15 - 0.25)
+        m = (t >= 0.15) & (t < 0.25)
+        u = (t[m] - 0.15) / 0.10 if m.any() else 0.0
+        r[m] = 0.12 + 0.68 * u
+        g[m] = 0.38 + 0.32 * u
+        b[m] = 0.60 - 0.25 * u
+
+        # Grass / lowland (0.25 - 0.50)
+        m = (t >= 0.25) & (t < 0.50)
+        u = (t[m] - 0.25) / 0.25 if m.any() else 0.0
+        r[m] = 0.20 + 0.20 * u
+        g[m] = 0.60 + 0.00 * u
+        b[m] = 0.35 - 0.15 * u
+
+        # Forest / mid elevation (0.50 - 0.70)
+        m = (t >= 0.50) & (t < 0.70)
+        u = (t[m] - 0.50) / 0.20 if m.any() else 0.0
+        r[m] = 0.30 + 0.35 * u
+        g[m] = 0.50 - 0.15 * u
+        b[m] = 0.25 - 0.20 * u
+
+        # Rock / high elevation (0.70 - 0.85)
+        m = (t >= 0.70) & (t < 0.85)
+        u = (t[m] - 0.70) / 0.15 if m.any() else 0.0
+        r[m] = 0.55 + 0.25 * u
+        g[m] = 0.40 + 0.20 * u
+        b[m] = 0.25 + 0.60 * u
+
+        # Snow / peaks (0.85 - 1.0)
+        m = (t >= 0.85) & (t <= 1.0)
+        u = (t[m] - 0.85) / 0.15 if m.any() else 0.0
+        r[m] = 0.80 + 0.15 * u
+        g[m] = 0.70 + 0.22 * u
+        b[m] = 0.60 + 0.35 * u
+
+        return np.stack([r, g, b], axis=-1)
+
+    img = terrain_color(height)
+    pil_img = Image.fromarray(np.clip(img * 255, 0, 255).astype(np.uint8), mode="RGB")
+    pil_img.save(path, "PNG")
+    print(f"  Saved heightfield heatmap: {path}")
 
 
 def save_3d_terrain(world: OutdoorWorld, path: str) -> None:
-    """Save a 3D perspective view of the terrain heightfield.
+    """Save a 3D perspective render of the terrain using trimesh + PIL.
 
-    Args:
-        world: The generated outdoor world.
-        path: Output file path.
+    Uses a fast perspective projection with simple lighting computed per triangle.
     """
-    height = world.heightfield.height  # (res, res)
+    height = world.heightfield.height
     size = world.size
-    res = height.shape[0]
+    res = min(height.shape[0], 128)  # Downsample for render speed
 
-    # Build coordinate grids
+    # Build mesh
     x = np.linspace(-size / 2, size / 2, res)
     y = np.linspace(-size / 2, size / 2, res)
     xx, yy = np.meshgrid(x, y)
-    zz = height * size  # Scale to world units
+    zz = height[:res, :res] * size * 0.3
 
-    fig = plt.figure(figsize=(14, 10), dpi=150)
-    ax = fig.add_subplot(111, projection='3d')
+    row = np.arange(res)
+    i, j = np.meshgrid(row[:-1], row[:-1], indexing="ij")
+    triangles = np.stack([
+        np.c_[i.ravel(), j.ravel(), ((i + 1) * res + (j + 1)).ravel()],
+        np.c_[i.ravel(), ((i + 1) * res + (j + 1)).ravel(), ((i + 1) * res + j).ravel()],
+    ], axis=1).reshape(-1, 3)
 
-    # Downsample for visualization
-    step = 4
-    ax.plot_surface(xx[::step, ::step], yy[::step, ::step], zz[::step, ::step],
-                    cmap='terrain', edgecolor='none', alpha=0.9)
-    ax.set_title('Procedural Outdoor World — 3D Terrain')
-    ax.set_xlabel('X (m)')
-    ax.set_ylabel('Y (m)')
-    ax.set_zlabel('Height (m)')
-    ax.view_init(elev=30, azim=45)
-    plt.tight_layout()
-    plt.savefig(path, dpi=150, bbox_inches='tight')
-    plt.close()
-    print(f'  Saved 3D terrain: {path}')
+    vertices = np.stack([xx.ravel(), zz.ravel(), -yy.ravel()], axis=1)
 
+    # Lighting
+    light_dir = np.array([0.5, 0.3, 1.0]) / np.linalg.norm([0.5, 0.3, 1.0])
+    v0 = vertices[triangles[:, 0]]
+    v1 = vertices[triangles[:, 1]]
+    v2 = vertices[triangles[:, 2]]
+    face_normals = np.cross(v1 - v0, v2 - v0)
+    face_normals = face_normals / (np.linalg.norm(face_normals, axis=1, keepdims=True) + 1e-8)
+    lighting = np.clip(np.sum(face_normals * light_dir, axis=1), 0, 1)
 
-def save_scatter_overlay(world: OutdoorWorld, path: str) -> None:
-    """Save terrain with scatter objects overlaid.
+    # Projection: simple perspective to 2D
+    h_img, w_img = 1200, 1600
+    fov = 0.6
+    center_x, center_y = w_img // 2, h_img // 2
+    scale = min(w_img, h_img * 0.8) / size
 
-    Args:
-        world: The generated outdoor world.
-        path: Output file path.
-    """
-    # Heightfield background
-    height = world.heightfield.height
+    # Create image and draw polygons
+    img = Image.new("RGB", (w_img, h_img), (15, 20, 35))  # Dark sky
+    draw = Draw(img)
 
-    # Scatter positions
-    scatter = world.scatter
-    positions, _types, _scales = scatter.get_mesh_data()
+    for t_idx in range(len(triangles)):
+        v0s = vertices[triangles[t_idx, 0]]
+        v1s = vertices[triangles[t_idx, 1]]
+        v2s = vertices[triangles[t_idx, 2]]
 
-    fig, ax = plt.subplots(figsize=(12, 10), dpi=150)
-    extent2: tuple[float, float, float, float] = (-world.size / 2, world.size / 2, -world.size / 2, world.size / 2)
-    im = ax.imshow(height, cmap='terrain', extent=extent2)
+        # Project to 2D with perspective
+        def project(v: np.ndarray) -> tuple[int, int]:
+            z = max(v[1], 0.01)
+            px = center_x + v[0] * scale * fov / z
+            py = center_y - (v[1] * 0.5 + v[2] * scale * 0.3) / z * h_img / (size * 0.3)
+            return int(px), int(py)
 
-    # Plot scatter objects
-    if len(positions) > 0:
-        # Scatter objects are in world coords; filter to visible range
-        mask = (np.abs(positions[:, 0]) < world.size / 2) & (np.abs(positions[:, 1]) < world.size / 2)
-        visible = positions[mask]
-        if len(visible) > 0:
-            ax.scatter(visible[:, 0], visible[:, 1], c='red', s=1, alpha=0.5, label='Scatter objects')
+        p0 = project(v0s)
+        p1 = project(v1s)
+        p2 = project(v2s)
 
-    ax.set_title('Procedural Outdoor World — Scatter Overlay')
-    ax.set_xlabel('X (m)')
-    ax.set_ylabel('Y (m)')
-    fig.colorbar(im, ax=ax, label='Height')
-    ax.legend(loc='upper right', fontsize=8)
-    plt.tight_layout()
-    plt.savefig(path, dpi=150, bbox_inches='tight')
-    plt.close()
-    print(f'  Saved scatter overlay: {path}')
+        # Height-based color with lighting
+        avg_height = np.mean([v0s[1], v1s[1], v2s[1]])
+        ht_norm = np.clip(avg_height / (size * 0.3), 0, 1)
+        shade = lighting[t_idx]
+        r = int((0.2 + 0.6 * ht_norm) * shade * 0.9 + 0.1) * 255 // 255
+        g = int((0.5 - 0.2 * ht_norm) * shade * 0.9 + 0.1) * 255 // 255
+        b = int((0.3 + 0.3 * ht_norm) * shade * 0.9 + 0.05) * 255 // 255
+        color = (max(0, min(255, r)), max(0, min(255, g)), max(0, min(255, b)))
+        draw.polygon([p0, p1, p2], fill=color)
+
+    img.save(path, "PNG")
+
+    # Also save OBJ for Blender/Maya
+    obj_path = path.replace(".png", ".obj")
+    trimesh.Trimesh(vertices=vertices, faces=triangles, process=False).export(obj_path, file_type="obj")
+    print(f"  Saved 3D render: {path}")
+    print(f"  Saved OBJ mesh: {obj_path}")
 
 
 def main() -> None:
-    """Generate all screenshots for a seed."""
+    """Generate renders for multiple seeds."""
     seeds = [42, 123, 999]
-    output_dir = 'screenshots'
+    output_dir = "screenshots"
+    resolution = 256
 
     os.makedirs(output_dir, exist_ok=True)
 
     for seed in seeds:
-        print(f'\nGenerating world (seed={seed})...')
-        world = OutdoorWorld(seed=seed, resolution=256, size=512.0)
+        print(f"\nGenerating world (seed={seed})...")
+        world = OutdoorWorld(seed=seed, resolution=resolution, size=512.0)
         world.generate()
 
-        prefix = f'{output_dir}/world_seed{seed}'
+        prefix = f"{output_dir}/world_seed{seed}"
 
-        print('  Generating biome map...')
-        save_biome_map(world, f'{prefix}_biome.png')
+        print("  Biome map...")
+        save_biome_map(world, f"{prefix}_biome.png")
 
-        print('  Generating heightfield heatmap...')
-        save_heightfield_heatmap(world, f'{prefix}_height.png')
+        print("  Heightfield heatmap...")
+        save_heightfield_heatmap(world, f"{prefix}_height.png")
 
-        print('  Generating 3D terrain view...')
-        save_3d_terrain(world, f'{prefix}_3d.png')
+        print("  3D terrain render...")
+        save_3d_terrain(world, f"{prefix}_terrain.png")
 
-        print('  Generating scatter overlay...')
-        save_scatter_overlay(world, f'{prefix}_scatter.png')
+        h = world.heightfield.height
+        print(f"  World: height=[{h.min():.3f}, {h.max():.3f}], "
+              f"biomes={len(np.unique(world.heightfield.biome))}, "
+              f"resolution={resolution}x{resolution}")
 
-        print(f'  World stats: height=[{world.heightfield.height.min():.3f}, {world.heightfield.height.max():.3f}], '
-              f'scatter={len(world.scatter.positions)}')
-
-    print(f'\nAll screenshots saved to {output_dir}/')
+    print(f"\nDone! All renders in {output_dir}/")
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()

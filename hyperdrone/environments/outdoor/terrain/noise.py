@@ -21,10 +21,7 @@ def hash4(a: np.ndarray, b: np.ndarray, c: np.ndarray, d: np.ndarray) -> np.ndar
         result = (x * y) & 0xFFFFFFFF
         return result.astype(np.int64)
 
-    h = (imul(a, 0x27D4EB2D) ^
-         imul(b, 0x165667B1) ^
-         imul(c, 0x9E3779B1) ^
-         imul(d, 0x85EBCA77))
+    h = imul(a, 0x27D4EB2D) ^ imul(b, 0x165667B1) ^ imul(c, 0x9E3779B1) ^ imul(d, 0x85EBCA77)
 
     h = imul(h ^ np.right_shift(h, 15), 0x85EBCA6B)
     h = imul(h ^ np.right_shift(h, 13), 0xC2B2AE35)
@@ -87,17 +84,32 @@ def gradient_noise(
     wz = z - iz
 
     # Quintic interpolation
-    ux = wx ** 3 * (wx * (wx * 6 - 15) + 10)
-    uy = wy ** 3 * (wy * (wy * 6 - 15) + 10)
-    uz = wz ** 3 * (wz * (wz * 6 - 15) + 10)
+    ux = wx**3 * (wx * (wx * 6 - 15) + 10)
+    uy = wy**3 * (wy * (wy * 6 - 15) + 10)
+    uz = wz**3 * (wz * (wz * 6 - 15) + 10)
 
     # Gradient directions
-    gradients = np.array([
-        [1, 1, 0], [-1, 1, 0], [1, -1, 0], [-1, -1, 0],
-        [1, 0, 1], [-1, 0, 1], [1, 0, -1], [-1, 0, -1],
-        [0, 1, 1], [0, -1, 1], [0, 1, -1], [0, -1, -1],
-        [1, 1, 0], [-1, 1, 0], [0, -1, 1], [0, -1, -1]
-    ], dtype=np.float64)
+    gradients = np.array(
+        [
+            [1, 1, 0],
+            [-1, 1, 0],
+            [1, -1, 0],
+            [-1, -1, 0],
+            [1, 0, 1],
+            [-1, 0, 1],
+            [1, 0, -1],
+            [-1, 0, -1],
+            [0, 1, 1],
+            [0, -1, 1],
+            [0, 1, -1],
+            [0, -1, -1],
+            [1, 1, 0],
+            [-1, 1, 0],
+            [0, -1, 1],
+            [0, -1, -1],
+        ],
+        dtype=np.float64,
+    )
 
     def grad(gi: int, dx: np.ndarray, dy: np.ndarray, dz: np.ndarray) -> np.ndarray:
         g = gradients[gi]
@@ -143,7 +155,16 @@ def gradient_noise(
     k6 = va - vb - ve + vf
     k7 = -va + vb + vc - vd + ve - vf - vg + vh
 
-    result = va + ux * k1 + uy * k2 + uz * k3 + ux * uy * k4 + uy * uz * k5 + uz * ux * k6 + ux * uy * uz * k7
+    result = (
+        va
+        + ux * k1
+        + uy * k2
+        + uz * k3
+        + ux * uy * k4
+        + uy * uz * k5
+        + uz * ux * k6
+        + ux * uy * uz * k7
+    )
 
     return result * 0.95
 
@@ -168,17 +189,32 @@ def noise3(
     wz = z - iz
 
     # Quintic interpolation
-    ux = wx ** 3 * (wx * (wx * 6 - 15) + 10)
-    uy = wy ** 3 * (wy * (wy * 6 - 15) + 10)
-    uz = wz ** 3 * (wz * (wz * 6 - 15) + 10)
+    ux = wx**3 * (wx * (wx * 6 - 15) + 10)
+    uy = wy**3 * (wy * (wy * 6 - 15) + 10)
+    uz = wz**3 * (wz * (wz * 6 - 15) + 10)
 
     # Gradient directions
-    gradients = np.array([
-        [1, 1, 0], [-1, 1, 0], [1, -1, 0], [-1, -1, 0],
-        [1, 0, 1], [-1, 0, 1], [1, 0, -1], [-1, 0, -1],
-        [0, 1, 1], [0, -1, 1], [0, 1, -1], [0, -1, -1],
-        [1, 1, 0], [-1, 1, 0], [0, -1, 1], [0, -1, -1]
-    ], dtype=np.float64)
+    gradients = np.array(
+        [
+            [1, 1, 0],
+            [-1, 1, 0],
+            [1, -1, 0],
+            [-1, -1, 0],
+            [1, 0, 1],
+            [-1, 0, 1],
+            [1, 0, -1],
+            [-1, 0, -1],
+            [0, 1, 1],
+            [0, -1, 1],
+            [0, 1, -1],
+            [0, -1, -1],
+            [1, 1, 0],
+            [-1, 1, 0],
+            [0, -1, 1],
+            [0, -1, -1],
+        ],
+        dtype=np.float64,
+    )
 
     # Compute gradient vectors at corners
     seed_array = np.full_like(ix, seed)
@@ -192,7 +228,9 @@ def noise3(
     idx_h = (hash4(ix + 1, iy + 1, iz + 1, seed_array) & 15).astype(np.int64)
 
     # Dot products using vectorized gradient lookup
-    def dot_at_corner(indices: np.ndarray, dx: np.ndarray, dy: np.ndarray, dz: np.ndarray) -> np.ndarray:
+    def dot_at_corner(
+        indices: np.ndarray, dx: np.ndarray, dy: np.ndarray, dz: np.ndarray
+    ) -> np.ndarray:
         """Compute gradient dot product for a set of indices."""
         indices_flat = indices.flatten()
         dx_flat = dx.flatten()
@@ -202,10 +240,12 @@ def noise3(
         result_flat = np.zeros_like(dx_flat)
 
         for gi in range(16):
-            mask = (indices_flat == gi)
+            mask = indices_flat == gi
             if mask.any():
                 g = gradients[gi]
-                result_flat[mask] = g[0] * dx_flat[mask] + g[1] * dy_flat[mask] + g[2] * dz_flat[mask]
+                result_flat[mask] = (
+                    g[0] * dx_flat[mask] + g[1] * dy_flat[mask] + g[2] * dz_flat[mask]
+                )
 
         return result_flat.reshape(indices.shape)
 
@@ -359,9 +399,9 @@ def warp(
     y = np.asarray(y, dtype=np.float64)
     z = np.asarray(z, dtype=np.float64)
 
-    o1 = {'octaves': 2, 'frequency': frequency, 'lacunarity': 2.0, 'gain': 0.5}
-    o2 = {'octaves': 2, 'frequency': frequency, 'lacunarity': 2.0, 'gain': 0.5}
-    o3 = {'octaves': 2, 'frequency': frequency, 'lacunarity': 2.0, 'gain': 0.5}
+    o1 = {"octaves": 2, "frequency": frequency, "lacunarity": 2.0, "gain": 0.5}
+    o2 = {"octaves": 2, "frequency": frequency, "lacunarity": 2.0, "gain": 0.5}
+    o3 = {"octaves": 2, "frequency": frequency, "lacunarity": 2.0, "gain": 0.5}
 
     wx = x + amount * fbm(seed + 17, x, y, z, **o1)
     wy = y + amount * fbm(seed + 31, x + 5.2, y + 1.3, z + 7.1, **o2)
@@ -402,8 +442,12 @@ def cellular(
 
                 # Feature point position
                 feature_x = cx + 0.5 + (hash01(cx, cy, cz, np.full_like(cx, seed)) - 0.5) * jitter
-                feature_y = cy + 0.5 + (hash01(cx, cy, cz, np.full_like(cx, seed + 1)) - 0.5) * jitter
-                feature_z = cz + 0.5 + (hash01(cx, cy, cz, np.full_like(cx, seed + 2)) - 0.5) * jitter
+                feature_y = (
+                    cy + 0.5 + (hash01(cx, cy, cz, np.full_like(cx, seed + 1)) - 0.5) * jitter
+                )
+                feature_z = (
+                    cz + 0.5 + (hash01(cx, cy, cz, np.full_like(cx, seed + 2)) - 0.5) * jitter
+                )
 
                 # Distance to this feature point
                 d = np.sqrt((feature_x - x) ** 2 + (feature_y - y) ** 2 + (feature_z - z) ** 2)
@@ -414,7 +458,9 @@ def cellular(
                 px[mask] = feature_x[mask]
                 py[mask] = feature_y[mask]
                 pz[mask] = feature_z[mask]
-                random_val[mask] = hash01(cx[mask], cy[mask], cz[mask], np.full_like(cx[mask], seed + 3))
+                random_val[mask] = hash01(
+                    cx[mask], cy[mask], cz[mask], np.full_like(cx[mask], seed + 3)
+                )
 
     return distance, px, py, pz
 
@@ -426,15 +472,25 @@ def smoothstep(a: float, b: float, x: np.ndarray) -> np.ndarray:
     return t * t * (3.0 - 2.0 * t)
 
 
-def lerp(a: float, b: float, t: np.ndarray) -> np.ndarray:
-    """Linear interpolation."""
-    t = np.asarray(t, dtype=np.float64)
-    return a + (b - a) * t
+def lerp(
+    a: float | np.ndarray,
+    b: float | np.ndarray,
+    t: float | np.ndarray,
+) -> np.ndarray:
+    """Linear interpolation: a + (b - a) * t."""
+    a_arr = np.asarray(a, dtype=np.float64)
+    b_arr = np.asarray(b, dtype=np.float64)
+    t_arr = np.asarray(t, dtype=np.float64)
+    return a_arr + (b_arr - a_arr) * t_arr
 
 
-def clamp(x: np.ndarray, lo: float, hi: float) -> np.ndarray:
+def clamp(
+    x: float | np.ndarray,
+    lo: float | np.ndarray,
+    hi: float | np.ndarray,
+) -> np.ndarray:
     """Clamp to [lo, hi]."""
-    return np.clip(x, lo, hi)
+    return np.clip(np.asarray(x, dtype=np.float64), np.asarray(lo), np.asarray(hi))
 
 
 def curve(
